@@ -40,15 +40,23 @@ check_command() {
 # Parse arguments
 PROJECT_DIR="$1"
 RESET_FLAG="$2"
+EXTRA_ARG="$3"
 
 if [[ -z "$PROJECT_DIR" ]]; then
     fail "No project directory specified. Usage: $0 <project_name> [--reset]"
 fi
 
+if [[ -n "$EXTRA_ARG" ]]; then
+    fail "Too many arguments. Usage: $0 <project_name> [--reset]"
+fi
+
+if [[ -n "$RESET_FLAG" && "$RESET_FLAG" != "--reset" ]]; then
+    fail "Invalid second argument '$RESET_FLAG'. Only '--reset' is allowed as an optional second argument."
+fi
+
+RESET_MODE=false
 if [[ "$RESET_FLAG" == "--reset" ]]; then
     RESET_MODE=true
-else
-    RESET_MODE=false
 fi
 
 FULL_PROJECT_PATH="${SOURCEDATA_DIR}/${PROJECT_DIR}"
