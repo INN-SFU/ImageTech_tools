@@ -4,27 +4,23 @@
 # Script Name: set_project_dir_permissions.sh
 #
 # Description:
-#   This script sets up the 'sourcedata' directory with appropriate group
-#   ownership, permissions, and ACLs, and creates a named subdirectory (e.g.,
-#   "projects") within it. If the script is run with the 'reset' argument, it
+#   This script creates the 'sourcedata' directory with appropriate group
+#   ownership, permissions, and ACLs, and creates a named project subdirectory 
+#   within it. If the script is run with the '--reset' argument, it
 #   resets the permissions and ACLs for all files and directories inside
-#   the 'projects' directory.
+#   the project directory (i.e., to rwxrws---).
 #
 # Usage:
-#   ./set_project_dir_permissions.sh
-#   (Optional: Edit the PROJECT_DIR variable to change the subdirectory name)
-#   ./set_project_dir_permissions.sh reset  # to reset permissions of files inside projects
+#   ./set_project_dir_permissions.sh <project_name>
+#   ./set_project_dir_permissions.sh <project_name> --reset
 #
 # Requirements:
-#   - Run as a user in the group 'imgtech_server_staff'.
+#   - Must be run by a user in the group 'imgtech_server_staff'.
 #
 # Author: Leanne Rokos
 ###############################################################################
 
-# Set project directory name
-PROJECT_DIR="projects" #MODIFY
-SOURCEDATA_DIR="sourcedata"
-FULL_PROJECT_PATH="${SOURCEDATA_DIR}/${PROJECT_DIR}"
+SOURCEDATA_DIR="/data/storage/sourcedata_testing"
 
 # Function to handle and report errors
 fail() {
@@ -41,25 +37,41 @@ check_command() {
     fi
 }
 
+# Parse arguments
+PROJECT_DIR="$1"
+RESET_FLAG="$2"
+
+if [[ -z "$PROJECT_DIR" ]]; then
+    fail "No project directory specified. Usage: $0 <project_name> [--reset]"
+fi
+
+if [[ "$RESET_FLAG" == "--reset" ]]; then
+    RESET_MODE=true
+else
+    RESET_MODE=false
+fi
+
+FULL_PROJECT_PATH="${SOURCEDATA_DIR}/${PROJECT_DIR}"
+
 # Reset permissions function
 reset_permissions() {
     echo "Resetting permissions and ACLs for everything inside '$FULL_PROJECT_PATH'..."
 
-    # Set group ownership and ACLs for everything inside the 'projects' directory
     check_command chown -R :imgtech_server_staff "$FULL_PROJECT_PATH"
     check_command chmod -R 2770 "$FULL_PROJECT_PATH"
-    check_command setfacl -R -d -m o::--- "$FULL_PROJECT_PATH"   # No access for others
-    check_command setfacl -R -d -m g::rwx "$FULL_PROJECT_PATH"    # Group has rwx permission
+    check_command setfacl -R -d -m o::--- "$FULL_PROJECT_PATH" # No access for others
+    check_command setfacl -R -d -m g::rwx "$FULL_PROJECT_PATH" # Group has rwx permission
 
     echo "Permissions and ACLs reset complete."
 }
 
-# Main logic
-if [ "$1" == "reset" ]; then
+# If reset flag is set, reset and exit
+if [ "$RESET_MODE" = true ]; then
     reset_permissions
     exit 0
 fi
 
+# Main setup logic
 echo "Checking sourcedata directory..."
 if [ -d "$SOURCEDATA_DIR" ]; then
     echo "Directory '$SOURCEDATA_DIR' already exists."
@@ -72,7 +84,7 @@ echo "Setting group ownership and permissions for '$SOURCEDATA_DIR'..."
 check_command chown :imgtech_server_staff "$SOURCEDATA_DIR"
 check_command chmod 2770 "$SOURCEDATA_DIR"
 check_command setfacl -d -m o::--- "$SOURCEDATA_DIR" # No access for others
-check_command setfacl -d -m g::rwx "$SOURCEDATA_DIR" # Group permission rwx
+check_command setfacl -d -m g::rwx "$SOURCEDATA_DIR" # Group has rwx permission
 
 echo "Checking project directory '${PROJECT_DIR}'..."
 if [ -d "$FULL_PROJECT_PATH" ]; then
