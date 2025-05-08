@@ -39,8 +39,8 @@
 ##############################################################################
 
 # Hardcoded directories
-PREFIX_DIR="/data/storage/"
-USER_FACLS_DIR="/data/storage/software/user_facls"  # Directory where all user ACL files are stored
+PREFIX_DIR="/data/storage/projects"
+USER_FACLS_DIR="/data/storage/software/user_permissions"  # Directory where all user ACL files are stored
 
 # Ensure the ACL directory exists
 if [[ ! -d "$USER_FACLS_DIR" ]]; then
