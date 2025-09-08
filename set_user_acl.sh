@@ -27,6 +27,9 @@
 #   4. Remove all ACLs for a user and revoke access:
 #      ./set_user_acl.sh user_1 -d
 #
+#   5. Exclude directories or files from ACL application using a text file:
+#      ./set_user_acl.sh user_1 --exclude /path/to/exclude.txt
+#
 # ACL Files Location:
 #   - All user ACL files must be stored inside `user_facls/`
 #   - Example structure:
@@ -39,8 +42,8 @@
 ##############################################################################
 
 # Hardcoded directories
-PREFIX_DIR="/data/storage/projects"
-USER_FACLS_DIR="/data/storage/software/user_permissions"  # Directory where all user ACL files are stored
+PREFIX_DIR="/project/ctb-rmcintos/scripts-share"
+USER_FACLS_DIR="/project/ctb-rmcintos/scripts-share/user_permissions"  # Directory where all user ACL files are stored
 
 # Ensure the ACL directory exists
 if [[ ! -d "$USER_FACLS_DIR" ]]; then
@@ -56,18 +59,57 @@ validate_prefix_directory() {
     fi
 }
 
+# Initialize exclude array
+EXCLUDE_DIRS=()
+
+# Parse --exclude argument
+ARGS=()
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --exclude)
+            EXCLUDE_FILE="$2"
+            shift 2
+            if [[ ! -f "$EXCLUDE_FILE" ]]; then
+                echo "Error: Exclude file '$EXCLUDE_FILE' does not exist."
+                exit 1
+            fi
+            mapfile -t EXCLUDE_DIRS < "$EXCLUDE_FILE"
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${ARGS[@]}"
+
 # Function to find dataset directories matching a regex
 find_matching_datasets() {
     local regex_pattern="$1"
     find "$PREFIX_DIR" -mindepth 1 -maxdepth 1 -type d | grep -E "$regex_pattern"
 }
 
+# Function to check if path is excluded
+is_excluded() {
+    local path="$1"
+    [[ ${#EXCLUDE_DIRS[@]} -eq 0 ]] && return 1  # no excludes
+    for exclude in "${EXCLUDE_DIRS[@]}"; do
+        if [[ "$path" == "$PREFIX_DIR/$exclude"* ]]; then
+            return 0  # path is excluded
+        fi
+    done
+    return 1
+}
+
 # Function to reset ACLs for a user before applying new ones
 reset_user_permissions() {
     local user="$1"
     echo "Resetting all ACL permissions for user '$user' under '$PREFIX_DIR'"
-
-    find "$PREFIX_DIR" -type d | xargs -r setfacl -x u:"$user"
+    find "$PREFIX_DIR" -type d | while IFS= read -r dir; do
+        is_excluded "$dir" && continue
+        setfacl -x u:"$user" "$dir"
+    done
+#    find "$PREFIX_DIR" -type d | xargs -r setfacl -x u:"$user"
 }
 
 # Function to remove all ACL permissions for a user
@@ -81,7 +123,10 @@ delete_user_permissions() {
     fi
 
     echo "Removing all ACL permissions for user '$user' under '$PREFIX_DIR'"
-    find "$PREFIX_DIR" -type d | xargs -r setfacl -x u:"$user"
+    find "$PREFIX_DIR" -type d | while IFS= read -r dir; do
+            is_excluded "$dir" && continue
+            setfacl -x u:"$user" "$dir"
+        done
     setfacl -x u:"$user" "$PREFIX_DIR"
 }
 
@@ -138,6 +183,7 @@ apply_user_permissions() {
         #fix_sticky_and_setgid "$dataset_path"
 
         echo "Setting permissions '$acl_perm' for user '$user' on '$dataset_path'"
+        is_excluded "$dataset_path" && continue
         echo "setfacl -m u:"$user":"$acl_perm" "$dataset_path""
         setfacl -R -m u:$user:$acl_perm $dataset_path
         echo "setfacl -d -m u:"$user":"$acl_perm" "$dataset_path""
@@ -198,5 +244,3 @@ else
     echo "Usage: $0 [username] [update|-d]"
     exit 1
 fi
-
-echo "All ACL updates complete."
