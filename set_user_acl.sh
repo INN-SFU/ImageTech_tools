@@ -67,7 +67,7 @@ reset_user_permissions() {
     local user="$1"
     echo "Resetting all ACL permissions for user '$user' under '$PREFIX_DIR'"
 
-    find "$PREFIX_DIR" -type d | xargs -r setfacl -x u:"$user"
+    find "$PREFIX_DIR" -type d -print0 | xargs -0 -r setfacl -x u:"$user"
 }
 
 # Function to remove all ACL permissions for a user
@@ -81,7 +81,7 @@ delete_user_permissions() {
     fi
 
     echo "Removing all ACL permissions for user '$user' under '$PREFIX_DIR'"
-    find "$PREFIX_DIR" -type d | xargs -r setfacl -x u:"$user"
+    find "$PREFIX_DIR" -type d -print0 | xargs -0 -r setfacl -x u:"$user"
     setfacl -x u:"$user" "$PREFIX_DIR"
 }
 
@@ -139,9 +139,9 @@ apply_user_permissions() {
 
         echo "Setting permissions '$acl_perm' for user '$user' on '$dataset_path'"
         echo "setfacl -m u:"$user":"$acl_perm" "$dataset_path""
-        setfacl -R -m u:$user:$acl_perm $dataset_path
+        setfacl -R -m u:"$user":"$acl_perm" "$dataset_path"
         echo "setfacl -d -m u:"$user":"$acl_perm" "$dataset_path""
-        setfacl -d -R -m u:$user:$acl_perm $dataset_path
+        setfacl -d -R -m u:"$user":"$acl_perm" "$dataset_path"
     done
 }
 
