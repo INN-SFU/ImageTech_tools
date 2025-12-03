@@ -1,23 +1,65 @@
 #!/bin/bash
-
-# script for MRI image reconstruction from raw DICOMS
+################################################################################
+# MRI Image Reconstruction Script from Raw DICOMs
+#
+# This script copies, unzips, sorts, and optionally converts raw MRI DICOM data
+# into BIDS format.
+#
+# Usage:
+#   ./run_reconstruction.sh <filepath> <project_name> [bids]
+#
+# Arguments:
+#   <filepath>       Full path to the zipped MRI file (e.g., sub-BRS0034_20241217.zip)
+#   <project_name>   Name of the project
+#   [bids]           Optional flag; include "bids" to run BIDS conversion with dcm2bids
+#
+# Example:
+#   ./run_reconstruction.sh /data/storage/sourcedata/BrainResilience/mri/sub-BRS0034_20241217.zip BrainResilience bids
+#
+# Key Functions:
+# - Copies the zip file to /data/storage/test-project/<project_name>/mri/zipped
+# - Unzips the contents into /unzipped/sub-<subject>_<date>
+# - Sorts the DICOM files into /raw_sorted/sub-<subject>/ses-<date> using dicomsort
+# - Optionally converts the sorted data into BIDS using dcm2bids and a config file
+#   located at /data/storage/software/config_files/<project_name>_config.json
+#
+# Requirements:
+# - `dicomsort`, `dcm2niix`, and `dcm2bids` must be installed and available in the environment
+# - A valid BIDS config JSON file must exist for the project at /data/storage/software/config_files/<project_name>_config.json
+#
+# Notes:
+# - The output directory is hardcoded to /data/storage/projects/
+# - This script assumes the zipped file is named using the pattern: sub-<ID>_<YYYYMMDD>.zip
+#
+# Author: Sunayani Sarkar
+#
+############################################################################################
 
 # Load dcm2niix software:
 # module load dcm2niix
+# module load dcm2bids
 
 # get file path from user:
-
-if [ $# -lt 1 ]; then
-    echo "Usage: $0 <filepath>"
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 <filepath> <project_name> [bids]"
     exit 1
 fi
 
 filepath="$1"
+PROJECT_NAME="$2"
+RUN_BIDS=0
+if [ "$3" == "bids" ]; then
+    RUN_BIDS=1
+fi
+
 echo "File path provided: $filepath"
 
 # Get directory portion of path
 dirpath=$(dirname "$filepath")
-filename=$(basename "$filepath")
+old_filename=$(basename "$filepath")
+filename=${old_filename#sub-}
+filename="${filename#sub_}"
+echo "$filename"
 
 # Check if directory exists
 if [ ! -d "$dirpath" ]; then
@@ -25,16 +67,12 @@ if [ ! -d "$dirpath" ]; then
     exit 1
 fi
 
-# Now you can use the filepath by changing directory
-# MRI raw data are in:
 cd "$dirpath" || {
     echo "Error: Failed to cd to $dirpath"
     exit 1
 }
 
-echo "Now in directory: $(pwd)"
-
-destpath="/data/storage/test-project/mri/raw" # CHANGE IF NEEDED
+destpath="/data/storage/projects/${PROJECT_NAME}/mri" # CHANGE IF NEEDED
 
 # Check if directory exists. If not, make new directory
 # First ensure base destination path exists
@@ -42,125 +80,161 @@ destpath="/data/storage/test-project/mri/raw" # CHANGE IF NEEDED
     echo "Error: Could not create destination path $destpath" >&2
     exit 1
 }
+declare -a dicomsort_raw_dirname=()
 
-# Then create subdirectories
-for dir in zipped unzipped sorted; do
-    if [ -d "$destpath/$dir" ]; then
-        echo "Directory already exists: $destpath/$dir" >&2
+# Get subject name (raw_name) without extension
+raw_name=${filename%.zip}
+dicomsort_raw_dirname+=("$raw_name")
+
+
+for subject in "${dicomsort_raw_dirname[@]}"; do
+#    subj_id_short=$(echo "$subject" | cut -d'_' -f1)  # e.g., BRS0034 (without sub- prefix)
+    subj_id_short=$(echo "$subject" | sed -E 's/^sub[_-]//' | sed -E 's/_[0-9]{8}//')
+    date_yyyymmdd=$(echo "$subject" | grep -oP '[0-9]{8}')
+    raw_sorted_dir="$destpath/raw_sorted/sub-$subj_id_short/ses-$date_yyyymmdd"
+
+    if [ -d "$raw_sorted_dir" ]; then
+        echo "DICOM already sorted at: $raw_sorted_dir"
+        echo "Skipping sorting for subject: $subject"
     else
-        mkdir -p "$destpath/$dir" || {
-            echo "Error: Failed to create $destpath/$dir" >&2
+
+        echo "Processing subject: $subject"
+        echo "Creating necessary directories..."
+
+    # Create required directories only if needed
+        for dir in zipped unzipped raw_sorted; do
+            [ -d "$destpath/$dir" ] || mkdir -p "$destpath/$dir"
+        done
+
+        # Copy zipped file
+        if cp "$old_filename" "$destpath/zipped/"; then
+            echo "Copied $old_filename to $destpath/zipped/"
+
+            # Check if filenames differ before renaming
+            if [[ "$old_filename" != "$filename" ]]; then
+                mv "$destpath/zipped/$old_filename" "$destpath/zipped/$filename"
+                echo "Renamed to $filename"
+            fi
+        else
+            echo "Error: Copy failed!" >&2
+            exit 1
+        fi
+
+        # Peek inside ZIP to get top-level folder
+        top_level_dir=$(unzip -l "$destpath/zipped/$filename" | awk '{print $4}' | grep '/$' | head -n1 | cut -d/ -f1)
+        if [[ "$top_level_dir" != *"$subj_id_short"* || "$top_level_dir" != *"$date_yyyymmdd"* ]]; then
+            echo "ERROR: Unzipped folder name mismatch!"
+            echo "  Expected folder to include: $subj_id_short and $date_yyyymmdd"
+            echo "  Found instead: $top_level_dir"
+            exit 1
+        fi
+
+        # Unzip if not already unzipped
+        output_dir="$destpath/unzipped/sub-$raw_name"
+        if [ -d "$output_dir" ]; then
+            echo "Unzipped folder exists: $output_dir"
+        else
+            echo "Unzipping $filename to $destpath/unzipped/"
+            unzip -q -o "$destpath/zipped/$filename" -d "$destpath/unzipped/" || {
+                echo "Error: Failed to unzip $filename" >&2
+                exit 1
+            }
+
+            # Find the actual top-level folder created by unzip for this subject
+            unzipped_dir=$(find "$destpath/unzipped" -mindepth 1 -maxdepth 1 -type d -iname "*${subj_id_short}*" | head -n1)
+
+            # Standardize folder name
+            new_dir="$destpath/unzipped/sub-${subj_id_short}_${date_yyyymmdd}"
+            if [ "$unzipped_dir" != "$new_dir" ]; then
+                echo "Renaming $unzipped_dir -> $new_dir"
+                mv "$unzipped_dir" "$new_dir"
+            fi
+
+            unzipped_dir="$new_dir"
+            echo "Unzipped folder: $unzipped_dir"
+        fi
+
+        # Cleanup unwanted files before sorting 
+        echo "Cleaning unwanted files in $unzipped_dir"
+
+        find "$unzipped_dir" -type f \( \
+            -iname "XX_*" -o \
+            -iname "PS_*" -o \
+            -iname "README.TXT" -o \
+            -iname "*.exe" \
+        \) -print -delete
+
+        echo "Cleanup done."
+
+        # Run dicomsort
+        echo "Running dicomsort on: $subject"
+        echo "Sorting DICOMs to: $raw_sorted_dir"
+        dicomsort "$output_dir/DICOM" "$raw_sorted_dir/%SeriesDescription-%SeriesNumber/%SOPInstanceUID-%SeriesNumber-%InstanceNumber.dcm" || {
+#        dicomsort "$output_dir/DICOM" "$raw_sorted_dir/%SeriesNumber_%SeriesDescription-%SOPInstanceUID.dcm" || {
+            echo "Error: dicomsort failed for $subject" >&2
             exit 1
         }
     fi
-done
+    
+    if [ $RUN_BIDS -eq 1 ]; then
+        # Clean ID for BIDS compliance (letters/numbers only, no special chars)
+        clean_subject_id=$(echo "$subject" | sed 's/[^a-zA-Z0-9]//g')
+        [ -z "$clean_subject_id" ] && clean_subject_id="sub${RANDOM}"
 
-# Copying zipped files from /sourcedata to /raw/mri/zipped
-if cp "$filename" "$destpath/zipped/"; then
-    echo "Copied $filename to $destpath/zipped/"
-else
-    echo "Error: Copy failed!" >&2
-    exit 1
+        reconstruction_path="/data/storage/projects/${PROJECT_NAME}/mri/reconstructed" # TO DO: CHANGE TEST-PROJECT
+
+        # Check if directory exists. If not, make new directory
+        # First ensure base destination path exists
+        [ -d "$reconstruction_path" ] || mkdir -p "$reconstruction_path" || {
+            echo "Error: Could not create reconstruction path $reconstruction_path" >&2
+            exit 1
+        }
+        CONFIG_FILE="/data/storage/software/config_files/${PROJECT_NAME}_config.json"
+        # Check if config file exists
+        if [ ! -f "$CONFIG_FILE" ]; then
+            echo "Error: Config file not found at $CONFIG_FILE"
+            exit 1
+        fi
+
+        echo "Using config file: $CONFIG_FILE"
+        participants_tsv="$reconstruction_path/participants.tsv"
+        # Reconstruct MRI images with dcm2niix/dcm2bids software:
+        dcm2bids \
+            -d "$raw_sorted_dir" \
+            -p "$subj_id_short" \
+            -c "$CONFIG_FILE" \
+            -o "$reconstruction_path" \
+            -s "$date_yyyymmdd"\
+            --clobber || {
+                echo "BIDS conversion failed for $subject" >&2
+                continue
+            }
+#        echo -e "$clean_subject_id\t$subject" >> "$reconstruction_path/participants.tsv"
+
+        # Create participants.tsv with header if it doesn't exist
+        if [ ! -f "$participants_tsv" ]; then
+            echo -e "participant_id\tsession_id\tsex\tweight\tage" > "$participants_tsv"
+        fi
+
+        # Append subject ID with 'sub-' prefix
+        #echo -e "sub-${subj_id_short}" >> "$participants_tsv"
+
+
+        # Call python script to update participants.tsv with demographics
+        python3 /data/storage/software/extract_subject_info.py \
+            --dicom_path "$raw_sorted_dir" \
+            --subject_id "sub-${subj_id_short}" \
+            --session_id "ses-${date_yyyymmdd}" \
+            --participants_tsv "$participants_tsv"
+
+    #    bids-validator "$reconstruction_path" --ignoreWarnings || true
+    else
+        echo "Skipping BIDS reconstruction. Only sorting performed."
+    fi
+done
+# ------------------------ Wrap-up ------------------------
+if [ $RUN_BIDS -eq 1 ]; then
+    echo "BIDS conversion complete."
 fi
 
-declare -a dicomsort_raw_dirname=()
-
-# For each subject:
-# Unzip MRI .zip from /zipped into /unzipped directory with correct naming system:
-for zipfile in "$destpath"/zipped/*.zip; do
-    output_dir="$destpath/unzipped/$(basename "$zipfile" .zip)"
-    dicomsort_raw_dirname+=("$(basename "$zipfile" .zip)")
-    if [ -d "$output_dir" ] && [ "$zipfile" -ot "$output_dir" ]; then
-        echo "Skipping $zipfile: Contents already up-to-date"
-    else
-        unzip -o "$zipfile" -d "$destpath/unzipped/" || {
-            echo "Error: Failed to unzip $zipfile" >&2
-            continue
-        }
-    fi
-done
-
-cd "$destpath/unzipped" || {
-        echo "Error: Could not cd to $destpat/unzipped" >&2
-        exit 1
-    }
-
-# Run dicomsort and then place the data in /raw/sorted
-for subject in "${dicomsort_raw_dirname[@]}"; do
-    echo "Running dicomsort on: $subject"
-    dicomsort "$destpath/unzipped/$subject/DICOM" "$destpath/sorted/%PatientName/%StudyDate/%SeriesDescription/%InstanceNumber.dcm"
-done
-
-reconstruction_path="/data/storage/test-project/mri/reconstructed" # CHANGE IF NEEDED
-
-# Check if directory exists. If not, make new directory
-# First ensure base destination path exists
-[ -d "$reconstruction_path" ] || mkdir -p "$reconstruction_path" || {
-    echo "Error: Could not create reconstruction path $reconstruction_path" >&2
-    exit 1
-}
-
-# Change to reconstruction path
-cd "$reconstruction_path" || {
-    echo "Error: Could not cd to $reconstruction_path" >&2
-    exit 1
-}
-
-for subject in "${dicomsort_raw_dirname[@]}"; do
-    mkdir -p "$subject"|| {
-        echo "Error: Could not create subject directory for $subject" >&2
-        continue
-    }
-
-    if [ ! -d "$subject" ]; then
-        echo "Warning: $subject does not exist - skipping"
-        continue
-    fi
-    # Reconstruct MRI images with dcm2niix software:
-    # dcm2niix -o "$subject" -z y -v y "$destpath"/sorted/*/*/{T1*,
-    # Find all scan-type directories under each subject/date
-    find "$destpath"/sorted/*/ -type d -mindepth 2 -maxdepth 2 | while read -r scan_dir; do
-        echo "Converting DICOMs in: $scan_dir"
-        dcm2niix -o "$subject" -z y -v y "$scan_dir" || { #needs to be a directory name not .dcm file name
-            echo "Error: dcm2niix failed for $subject" >&2
-            continue
-        }
-    done
-done
-
-
-# # Process each subject directory
-# for subject_dir in "$destpath"/sorted/*/; do
-#     subject_name=$(basename "$subject_dir")
-#     echo "Processing subject: $subject_name"
-
-#     # Find the single date directory (alphanumeric, not 'nifti')
-#     date_dir=$(find "$subject_dir" -maxdepth 1 -type d ! -name ".*" ! -name "nifti" -print -quit)
-    
-#     if [ ! -d "$date_dir" ]; then
-#         echo "Warning: No date directory found for $subject_name" >&2
-#         continue
-#     fi
-
-#     # Find and process T1 directory (case insensitive)
-#     find "$date_dir" -maxdepth 1 -type d -iname "T1*" | while read -r t1_dir; do
-#         echo "Found T1 directory: $(basename "$t1_dir")"
-        
-#         # Run dcm2niix with clean output naming
-#         dcm2niix -o "$subject/$date_dir" -z y -v y "$t1_dir" || {
-#             echo "Error: Failed to convert $t1_dir" >&2
-#         }
-#     done
-# done
-
-# echo "Processing complete"
-
-# Download the following .nii.gz images to your local machine and inspect with FSLeyes or equivalent:
-# *3D_FLAIR*
-# *B0map*
-# *DTI_60*
-# *DTI_b0_rev*
-# *fMRI*_e1*
-# *fMRI*_e2*
-# *fMRI*_e3*
-# *T1W*
+echo "Processing complete."
