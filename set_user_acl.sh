@@ -9,7 +9,7 @@
 #   for dataset directories under a predefined prefix directory (e.g., `/data`).
 #
 #   Features:
-#   - Processes user-specific ACL files from `user_facls/` (e.g., `user_1_facls.txt`).
+#   - Processes user-specific ACL files from `user-permissions/` (e.g., `user_1_facls.txt`).
 #   - Supports regex-based dataset matching (`*project_*:rwx`).
 #   - Ensures no sticky bit (`t`) or setgid (`s`) is set on directories.
 #   - Provides options for full ACL resets, updates, and removals.
@@ -28,13 +28,7 @@
 #      ./set_user_acl.sh user_1 -d
 #
 # ACL Files Location:
-#   - All user ACL files must be stored inside `user_facls/`
-#   - Example structure:
-#       /your_project/
-#       ├── set_user_acl.sh
-#       ├── user_facls/
-#       │   ├── user_1_facls.txt
-#       │   ├── user_2_facls.txt
+#   - All user ACL files must be stored inside `/data/storage/software/user-permissions/`
 #
 ##############################################################################
 
@@ -67,7 +61,7 @@ reset_user_permissions() {
     local user="$1"
     echo "Resetting all ACL permissions for user '$user' under '$PREFIX_DIR'"
 
-    find "$PREFIX_DIR" -type d | xargs -r setfacl -x u:"$user"
+    find "$PREFIX_DIR" -type d | xargs -r sudo setfacl -x u:"$user"
 }
 
 # Function to remove all ACL permissions for a user
@@ -81,7 +75,7 @@ delete_user_permissions() {
     fi
 
     echo "Removing all ACL permissions for user '$user' under '$PREFIX_DIR'"
-    find "$PREFIX_DIR" -type d | xargs -r setfacl -x u:"$user"
+    find "$PREFIX_DIR" -type d | xargs -r sudo setfacl -x u:"$user"
     setfacl -x u:"$user" "$PREFIX_DIR"
 }
 
@@ -91,7 +85,7 @@ fix_sticky_and_setgid() {
 
     if [[ -d "$dataset_path" ]]; then
         echo "Ensuring no sticky bit or setgid bit is set on '$dataset_path'"
-        chmod g-s,o+t "$dataset_path"
+        chmod g-s,o-t "$dataset_path"
     fi
 }
 
@@ -105,6 +99,18 @@ convert_posix_to_acl() {
     [[ "${posix_perm:2:1}" == "x" ]] && acl_perm+="x"
 
     echo "$acl_perm"
+}
+
+# Ensure parent directories have execute permission for the user
+ensure_parent_execute() {
+    local user="$1"; local dataset_path="$2"
+    parents=$(dirname "$dataset_path")
+    while [[ "$parents" != "$PREFIX_DIR" && "$parents" != "/" ]]; do
+        echo "Ensuring execute permission for '$user' on '$parents'"
+        sudo setfacl -m u:$user:x "$parents"
+        parents=$(dirname "$parents")
+    done
+    sudo setfacl -m u:$user:x "$PREFIX_DIR"
 }
 
 # Function to apply ACL permissions to a dataset or regex-matched datasets
@@ -136,12 +142,12 @@ apply_user_permissions() {
 
     for dataset_path in "${dataset_paths[@]}"; do
         #fix_sticky_and_setgid "$dataset_path"
-
+        ensure_parent_execute "$user" "$dataset_path"
         echo "Setting permissions '$acl_perm' for user '$user' on '$dataset_path'"
         echo "setfacl -m u:"$user":"$acl_perm" "$dataset_path""
-        setfacl -R -m u:$user:$acl_perm $dataset_path
+        sudo setfacl -R -m u:$user:$acl_perm $dataset_path
         echo "setfacl -d -m u:"$user":"$acl_perm" "$dataset_path""
-        setfacl -d -R -m u:$user:$acl_perm $dataset_path
+        sudo setfacl -d -R -m u:$user:$acl_perm $dataset_path
     done
 }
 
