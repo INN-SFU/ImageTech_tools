@@ -6,7 +6,7 @@
 # The script renames BOTH:
 #   1) session folders (e.g., ses-20230101 →ses-<label>)
 #   2) all files within those folders that contain a ses-* entity
-#      - Note: any '_deFaced' suffix in filenames is removed
+#      - Note: any '_refaced' suffix in filenames is removed
 #
 # -------------------------
 # Mapping file (TSV) format
@@ -94,8 +94,8 @@ tail -n +2 "$MAP_FILE" | while IFS=$'\t' read -r -a FIELDS; do
             BASENAME=$(basename "$FILE")
             DIRNAME=$(dirname "$FILE")
 
-            # Rename session in filename and remove _deFaced
-            NEWNAME=$(echo "$BASENAME" | sed -E "s/ses-[0-9]+/$NEW_SESSION/" | sed -E 's/_deFaced//g')
+            # Rename session in filename and remove _refaced
+            NEWNAME=$(echo "$BASENAME" | sed -E "s/ses-[0-9]+/$NEW_SESSION/" | sed -E 's/_refaced//g')
 
             if [[ "$NEWNAME" != "$BASENAME" ]]; then
                 if [[ $RUN_MODE -eq 1 ]]; then
