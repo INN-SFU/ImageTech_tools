@@ -74,7 +74,16 @@ def normalize_subject_id(subj_id):
 
 def subject_has_invalid_files(session_folder, subject_dir):
     """
-    Return True if any file in session_folder does NOT match the expected subject ID.
+    Validate MEG filenames in the session folder.
+
+    - If NOT BIDS: allow subject ID with or without separators.
+      Example valid:
+          decodingspeech-pilot001_block1.fif
+          decodingspeechpilot001_block1.fif
+
+    - If BIDS (--bids set): require NO separators before the block/task/run.
+      Example valid only for BIDS:
+          decodingspeechpilot001_block1.fif
     """
     expected_sub_id = normalize_subject_id(subject_dir)
     print(f"Checking session folder: {session_folder}")
@@ -82,14 +91,38 @@ def subject_has_invalid_files(session_folder, subject_dir):
 
     for f in session_folder.iterdir():
         if f.is_file() and f.suffix.lower() in [".fif", ".fif.gz"]:
-            # Check if expected_sub_id is in filename, ignoring case
-            if expected_sub_id.upper() not in f.stem.upper():
-                log_error(f"{f.name} contains unexpected subject ID (expected {expected_sub_id})")
-                return True
-            else:
-                print(f"File OK: {f.name} contains expected subject ID")
+            fname = f.stem
+            if do_bids:
+                if expected_sub_id.upper() not in fname.upper():
+                    log_error(
+                        f"{f.name} contains unexpected subject ID (expected {expected_sub_id})"
+                    )
+                    return True
+                else:
+                    print(f"File OK for BIDS: {f.name} contains expected subject ID")
 
+            else:
+                # Normalize filename
+                fname_norm = normalize_subject_id(fname)
+
+                # Check if filename starts with expected normalized ID
+                if not fname_norm.startswith(expected_sub_id):
+                    log_error(
+                        f"{f.name} contains unexpected subject ID "
+                        f"(normalized filename '{fname_norm}', expected prefix '{expected_sub_id}')"
+                    )
+                    return True
+                else:
+                    print(f"File OK for copying: {f.name}")
     return False
+#            # Check if expected_sub_id is in filename, ignoring case
+#            if expected_sub_id.upper() not in f.stem.upper():
+#                log_error(f"{f.name} contains unexpected subject ID (expected {expected_sub_id})")
+#                return True
+#            else:
+#                print(f"File OK: {f.name} contains expected subject ID")
+#
+#    return False
 
 # --- Pre-check all sessions first ---
 invalid_subject = False
@@ -142,126 +175,129 @@ for session_folder in subject_dir.iterdir():
                 dest = raw_subj_ses_dir / item.name
                 if not dest.exists():
                     shutil.copy2(item, dest)
-        print(f"    Copied raw MEG files to: {raw_subj_ses_dir}")
+        print(f"    Copied raw MEG files to: {raw_subj_ses_dir} (existing files were NOT overwritten)")
 
         # If --bids flag set, also convert to BIDS
         if do_bids:
-            for raw_meg in meg_files:
-                print(f"  Processing MEG file: {raw_meg.name}")
-                try:
-                    raw = mne.io.read_raw_fif(raw_meg, verbose=False)
-                    print(f"    Loaded file successfully.")
-                except Exception as e:
-                    log_error(f"    Failed to load {raw_meg.name}: {e}")
-                    continue
+            subject_bids_dir = reconstructed_path / f"sub-{subject_id}" / f"ses-{session_id}"
+            if subject_bids_dir.exists() and any(subject_bids_dir.iterdir()):
+                print(f"BIDS folder already exists and is not empty: {subject_bids_dir}. Skipping BIDS conversion.")
+            else:
+                for raw_meg in meg_files:
+                    print(f"  Processing MEG file: {raw_meg.name}")
+                    try:
+                        raw = mne.io.read_raw_fif(raw_meg, verbose=False)
+                        print(f"    Loaded file successfully.")
+                    except Exception as e:
+                        log_error(f"    Failed to load {raw_meg.name}: {e}")
+                        continue
 
-                # Clear birthday to avoid mne_bids errors
-                if raw.info.get("subject_info") and "birthday" in raw.info["subject_info"]:
-                    raw.info["subject_info"]["birthday"] = None
+                    # Clear birthday to avoid mne_bids errors
+                    if raw.info.get("subject_info") and "birthday" in raw.info["subject_info"]:
+                        raw.info["subject_info"]["birthday"] = None
 
-                if raw.info.get("subject_info"):
-                    raw.info["subject_info"]["sex"] = 0 # SET TO N/A FOR NOW
-                    raw.info["subject_info"]["hand"] = 0 # SET TO N/A FOR NOW
+                    if raw.info.get("subject_info"):
+                        raw.info["subject_info"]["sex"] = 0 # SET TO N/A FOR NOW
+                        raw.info["subject_info"]["hand"] = 0 # SET TO N/A FOR NOW
 
-                # Parse filename to extract subject_id, task, run robustly
-                fname = raw_meg.name.lower().replace('.fif', '').replace('.fif.gz', '')
+                    # Parse filename to extract subject_id, task, run robustly
+                    fname = raw_meg.name.lower().replace('.fif', '').replace('.fif.gz', '')
 
-                # Regex pattern to capture:
-                #  sub[-_]subjectid[_-]task+run[_-]raw...
-                pattern = r'^(?:sub[-_]?)?([a-z0-9]+)[-_]([a-z]+[0-9]*)[_-]raw'
-                m = re.match(pattern, fname)
-                if m:
-                    subject_id = m.group(1).upper()
-                    task_run_str = m.group(2)
-                else:
-                    log_error(f"    WARNING: Could not parse subject/task from filename '{raw_meg.name}'. Skipping this file.")
-                    continue
-
-                # Extract task and optional run number from task_run_str
-                m_task = re.match(r'([a-z]+)(\d*)', task_run_str)
-                if m_task:
-                    task = m_task.group(1)
-                    run = int(m_task.group(2)) if m_task.group(2) else None
-                else:
-                    log_error(f"    WARNING: Could not parse task/run from '{task_run_str}'. Skipping this file.")
-                    continue
-
-                bids_path = BIDSPath(
-                    subject=subject_id,
-                    session=session_id,
-                    task=task,
-                    run=run,
-                    root=reconstructed_path,
-                    datatype='meg',
-                    extension=".fif"
-                )
-
-                print(f"    Using BIDS path: {bids_path.fpath}")
-
-                try:
-                    write_raw_bids(
-                        raw,
-                        bids_path,
-                        overwrite=True,
-                        verbose=True
-                    )
-                    print("    BIDS conversion complete")
-
-                except Exception as e:
-                    log_error(f"    Failed to write BIDS: {e}")
-                    traceback.print_exc()
-                    failed_bids_files.append(raw_meg.name)
-
-            # --- Print summary of any files that were not converted ---
-            if failed_bids_files:
-                print("\n WARNING: The following MEG files were NOT converted to BIDS:")
-                for f in failed_bids_files:
-                    print(f"  {f}")
-
-        # Move BIDS output files up one level and remove 'meg' folder
-        subject_bids_dir = reconstructed_path / f"sub-{subject_id}" / f"ses-{session_id}"
-        meg_folder = subject_bids_dir / "meg"
-
-        if meg_folder.exists():
-            for f in meg_folder.iterdir():
-                dest = subject_bids_dir / f.name
-
-                # Remove existing file or directory at destination
-                if dest.exists():
-                    if dest.is_dir():
-                        shutil.rmtree(dest)
+                    # Regex pattern to capture:
+                    #  sub[-_]subjectid[_-]task+run[_-]raw...
+                    pattern = r'^(?:sub[-_]?)?([a-z0-9]+)[-_]([a-z]+[0-9]*)[_-]raw'
+                    m = re.match(pattern, fname)
+                    if m:
+                        subject_id = m.group(1).upper()
+                        task_run_str = m.group(2)
                     else:
-                        dest.unlink()
+                        log_error(f"    WARNING: Could not parse subject/task from filename '{raw_meg.name}'. Skipping this file.")
+                        continue
 
-                shutil.move(str(f), str(dest))
+                    # Extract task and optional run number from task_run_str
+                    m_task = re.match(r'([a-z]+)(\d*)', task_run_str)
+                    if m_task:
+                        task = m_task.group(1)
+                        run = int(m_task.group(2)) if m_task.group(2) else None
+                    else:
+                        log_error(f"    WARNING: Could not parse task/run from '{task_run_str}'. Skipping this file.")
+                        continue
 
-            shutil.rmtree(meg_folder)
-            print(f"    Moved contents and removed: {meg_folder}")
+                    bids_path = BIDSPath(
+                        subject=subject_id,
+                        session=session_id,
+                        task=task,
+                        run=run,
+                        root=reconstructed_path,
+                        datatype='meg',
+                        extension=".fif"
+                    )
 
-        # --- Call demographics extraction script ---
-        participants_tsv = reconstructed_path / "participants.tsv"
+                    print(f"    Using BIDS path: {bids_path.fpath}")
 
-        # Create participants.tsv with header if it doesn't exist
-        if not participants_tsv.exists():
-            with participants_tsv.open('w') as f:
-                f.write("participant_id\tsession_id\tsex\tweight\tage\n")
+                    try:
+                        write_raw_bids(
+                            raw,
+                            bids_path,
+                            overwrite=True,
+                            verbose=True
+                        )
+                        print("    BIDS conversion complete")
 
-        # Build DICOM path (raw_sorted_dir) and call script
-        raw_sorted_dir = f"/data/storage/projects/{project_name}/mri/raw_sorted/sub-{subject_id}/ses-{session_id}"
+                    except Exception as e:
+                        log_error(f"    Failed to write BIDS: {e}")
+                        traceback.print_exc()
+                        failed_bids_files.append(raw_meg.name)
 
-        extract_script = Path("/data/storage/software/extract_subject_info.py")
-        cmd = [
-            "python3", str(extract_script),
-            "--dicom_path", str(raw_sorted_dir),
-            "--subject_id", f"sub-{subject_id}",
-            "--session_id", f"ses-{session_id}",
-            "--participants_tsv", str(participants_tsv)
-        ]
-        try:
-            print(f"    Running extract_subject_info.py for {subject_id} / {session_id}")
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            log_error(f"    ERROR running extract_subject_info.py: {e}")
+                # --- Print summary of any files that were not converted ---
+                if failed_bids_files:
+                    print("\n WARNING: The following MEG files were NOT converted to BIDS:")
+                    for f in failed_bids_files:
+                        print(f"  {f}")
 
+                # Move BIDS output files up one level and remove 'meg' folder
+                subject_bids_dir = reconstructed_path / f"sub-{subject_id}" / f"ses-{session_id}"
+                meg_folder = subject_bids_dir / "meg"
+
+                if meg_folder.exists():
+                    for f in meg_folder.iterdir():
+                        dest = subject_bids_dir / f.name
+
+                        # Remove existing file or directory at destination
+                        if dest.exists():
+                            if dest.is_dir():
+                                shutil.rmtree(dest)
+                            else:
+                                dest.unlink()
+
+                        shutil.move(str(f), str(dest))
+
+                    shutil.rmtree(meg_folder)
+                    print(f"    Moved contents and removed: {meg_folder}")
+
+                # --- Call demographics extraction script ---
+                participants_tsv = reconstructed_path / "participants.tsv"
+
+                # Create participants.tsv with header if it doesn't exist
+                if not participants_tsv.exists():
+                    with participants_tsv.open('w') as f:
+                        f.write("participant_id\tsession_id\tsex\tweight\tage\n")
+
+                # Build DICOM path (raw_sorted_dir) and call script
+                raw_sorted_dir = f"/data/storage/projects/{project_name}/mri/raw_sorted/sub-{subject_id}/ses-{session_id}"
+
+                extract_script = Path("/data/storage/software/extract_subject_info.py")
+                cmd = [
+                    "python3", str(extract_script),
+                    "--dicom_path", str(raw_sorted_dir),
+                    "--subject_id", f"sub-{subject_id}",
+                    "--session_id", f"ses-{session_id}",
+                    "--participants_tsv", str(participants_tsv)
+                ]
+                try:
+                    print(f"    Running extract_subject_info.py for {subject_id} / {session_id}")
+                    subprocess.run(cmd, check=True)
+                except subprocess.CalledProcessError as e:
+                    log_error(f"    ERROR running extract_subject_info.py: {e}")
 
 print("\nAll MEG files have been processed.")

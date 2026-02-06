@@ -88,7 +88,6 @@ dicomsort_raw_dirname+=("$raw_name")
 
 
 for subject in "${dicomsort_raw_dirname[@]}"; do
-#    subj_id_short=$(echo "$subject" | cut -d'_' -f1)  # e.g., BRS0034 (without sub- prefix)
     subj_id_short=$(echo "$subject" | sed -E 's/^sub[_-]//' | sed -E 's/_[0-9]{8}//')
     date_yyyymmdd=$(echo "$subject" | grep -oP '[0-9]{8}')
     raw_sorted_dir="$destpath/raw_sorted/sub-$subj_id_short/ses-$date_yyyymmdd"
@@ -199,16 +198,21 @@ for subject in "${dicomsort_raw_dirname[@]}"; do
         echo "Using config file: $CONFIG_FILE"
         participants_tsv="$reconstruction_path/participants.tsv"
         # Reconstruct MRI images with dcm2niix/dcm2bids software:
-        dcm2bids \
-            -d "$raw_sorted_dir" \
-            -p "$subj_id_short" \
-            -c "$CONFIG_FILE" \
-            -o "$reconstruction_path" \
-            -s "$date_yyyymmdd"\
-            --clobber || {
-                echo "BIDS conversion failed for $subject" >&2
-                continue
-            }
+        bids_subject_dir="${reconstruction_path}/sub-${subj_id_short}/ses-${date_yyyymmdd}"
+
+        if [ -d "$bids_subject_dir" ]; then
+            echo "BIDS folder already exists for $subj_id_short ses-$date_yyyymmdd, skipping conversion..."
+        else
+            dcm2bids \
+                -d "$raw_sorted_dir" \
+                -p "$subj_id_short" \
+                -c "$CONFIG_FILE" \
+                -o "$reconstruction_path" \
+                -s "$date_yyyymmdd" || {
+                    echo "BIDS conversion failed for $subject" >&2
+                    continue
+                }
+        fi
 #        echo -e "$clean_subject_id\t$subject" >> "$reconstruction_path/participants.tsv"
 
         # Create participants.tsv with header if it doesn't exist
