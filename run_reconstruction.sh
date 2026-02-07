@@ -402,23 +402,24 @@ for subject_id_in_subject_file in "${subject_list_array[@]}"; do
     if [ $MEG_COPY -eq 1 ] || [ $BIDS_MEG -eq 1 ]; then
         subj_id="$subject_id_in_subject_file"
         echo "--- MEG reconstruction ---" | tee -a "$log_file"
-        subj_no_sub=$(echo "$subj_id" | sed 's/^sub-//I' | tr '[:upper:]' '[:lower:]')
-        prefix=$(echo "$subj_no_sub" | sed -E 's/^([a-z]+).*/\1/')
-        suffix=$(echo "$subj_no_sub" | sed -E "s/^$prefix//")  # everything after the prefix
+        subj_no_sub="${subj_id#sub-}"
+        subj_no_sub="${subj_no_sub#sub_}"
+        subj_no_sub="${subj_no_sub,,}"  # lowercase for consistency
 
-        # List of possible MEG folder names
-        possible_folders=(
-            "${prefix}${suffix}"        # e.g., brs0170
-            "${prefix}_${suffix#_}"     # e.g., brs_0170
-			"${subj_id}"                # e.g., BRS0170 
-        )
+        # Extract letters prefix and numeric suffix
+        prefix="${subj_no_sub%%[0-9]*}"  # letters at start
+        suffix="${subj_no_sub#$prefix}"  # everything else
 
+        # Try combinations: lowercase/uppercase + optional underscore
         subj_meg_path=""
-        for folder in "${possible_folders[@]}"; do
-            if [ -d "${MEG_DIR}/${folder}" ]; then
-                subj_meg_path="${MEG_DIR}/${folder}"
-                break
-            fi
+        for case in "${prefix,,}" "${prefix^^}"; do
+            for uscore in "" "_"; do
+                folder="${case}${uscore}${suffix}"
+                if [ -d "${MEG_DIR}/${folder}" ]; then
+                    subj_meg_path="${MEG_DIR}/${folder}"
+                    break 2
+                fi
+            done
         done
 
         echo "Using MEG folder path: $subj_meg_path"
