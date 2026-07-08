@@ -232,7 +232,30 @@ project_2:r-x
 ```
 
 ---
+## Dependencies
 
+The ImageTech workflow uses the following external software and packages. These scripts were developed for the ImageTech server environment, where some dependencies may already be installed.
+
+### **Docker**
+
+ Docker is required for MRI refacing using `mri_reface`.
+
+  - Download and unzip `mri_reface_0.3.5_docker.zip` from:
+        https://www.nitrc.org/projects/mri_reface/
+
+  - The script assumes the Docker image is located at:
+  `/data/storage/software/mri_reface_docker/mri_reface_docker_image`
+
+### **DICOM/BIDS conversion tools**
+
+ The following tools must be installed and available in your environment:
+
+  - `dicomsort` (install using: `pip install thedicomsort`)
+  - `dcm2niix`
+  - `dcm2bids`
+  - `mne-bids` (installed automatically)
+  
+---
 ## Notes
 
 * These scripts were designed for the ImageTech server environment and have been tested with the following naming conventions and directory structure:
