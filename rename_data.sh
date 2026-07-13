@@ -2,7 +2,7 @@
 ###############################################################################
 # rename_data.sh
 #
-# Script to rename reconstructed MRI/MEG data from the ImageTech servers to be BIDS-compliant.
+# Script to rename reconstructed MRI/MEG data from the SCAI servers to be BIDS-compliant.
 # The script renames BOTH:
 #   1) session folders (e.g., ses-20230101 →ses-<label>)
 #   2) all files within those folders that contain a ses-* entity
