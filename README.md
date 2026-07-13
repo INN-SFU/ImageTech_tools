@@ -5,29 +5,17 @@ This repository contains scripts used by **SCAI** for managing shared imaging da
 These tools are intended for use on the SCAI server and assume access to the shared data storage environment.
 
 ---
-
 ## Contents
 
-### Permission & Access Control Scripts
+| Script | Description |
+|---|---|
+| `set_sourcedata_permissions.sh` | Create and manage directories in `sourcedata` with correct group ownership and permissions. |
+| `set_user_acl.sh` | Create or update user-specific Access Control Lists (ACLs) for project directories in `projects`. |
+| `run_reconstruction.sh` | Main script to copy raw data and perform MRI/MEG reconstruction (optional BIDS conversion and MRI refacing). |
+| `reconstruct_MRIs.sh` | Script for MRI reconstruction workflows. |
+| `reconstruct_MEG.py` | Script for MEG data handling and reconstruction. |
+| `create_project_readmes.sh` | Generates standardized README files within project directories. |
 
-* **`set_sourcedata_permissions.sh`**
-  Create and manage directories in `sourcedata` with correct group ownership and permissions.
-
-* **`set_user_acl.sh`**
-  Create or update user-specific Access Control Lists (ACLs) for project directories in `projects`.
-
-### Reconstruction Scripts
-
-* **`run_reconstruction.sh`**
-  Main script to copy raw data and perform MRI/MEG reconstruction (optional BIDS conversion and MRI refacing).
-
-* **`reconstruct_MRIs.sh`**
-  Script for MRI reconstruction workflows.
-
-* **`reconstruct_MEG.py`**
-  Script for MEG data handling and reconstruction.
-
----
 
 ## SCAI Directory Structure Overview
 
@@ -53,10 +41,11 @@ These tools are intended for use on the SCAI server and assume access to the sha
 
 ### Raw Imaging Data Location (sourcedata)
 
-Uploaded raw data must be placed within a sub-directory inside `sourcedata`:
+Raw imaging data are organized within project-specific modality directories:
 
 ```
-/data/storage/sourcedata/<project_name>/
+/data/storage/sourcedata/<project_name>/mri/
+/data/storage/sourcedata/<project_name>/meg/
 ```
 
 * `sourcedata` contains raw, unprocessed imaging data.
@@ -67,7 +56,7 @@ Uploaded raw data must be placed within a sub-directory inside `sourcedata`:
 
 ### Shared/Reconstructed Project Directory (projects)
 
-Reconstructed and processed data is stored in:
+Reconstructed data is stored in:
 
 ```
 /data/storage/projects/<project_name>/
@@ -80,8 +69,34 @@ Reconstructed and processed data is stored in:
 
 ---
 
+# Getting Started
 
-## Creating a Project Directory in `sourcedata`
+## 1. Dependencies
+
+The SCAI workflow uses the following external software and packages. These scripts were developed for the SCAI server environment, where some dependencies may already be installed.
+
+### Docker
+
+ Docker is required for MRI refacing using `mri_reface`.
+
+  - Download and unzip `mri_reface_0.3.5_docker.zip` from:
+        https://www.nitrc.org/projects/mri_reface/
+
+  - The script assumes the Docker image is located at:
+  `/data/storage/software/mri_reface_docker/mri_reface_docker_image`
+
+### DICOM/BIDS conversion tools
+
+ The following tools must be installed and available in your environment:
+
+  - `dicomsort` (install using: `pip install thedicomsort`)
+  - `dcm2niix`
+  - `dcm2bids`
+  - `mne-bids` (installed automatically)
+
+---
+
+## 2. Creating a Project Directory in `sourcedata`
 
 To create a new project directory in `sourcedata`, run:
 
@@ -105,18 +120,66 @@ You may also create modality-specific subdirectories:
 ```
 ./set_sourcedata_permissions.sh my_project --both
 ```
+
 ---
 
-## Data Preparation & BIDS Conversion
+## 3. Uploading Raw Imaging Data
+
+Uploaded raw data should be placed in the appropriate modality-specific directories within the project `sourcedata` folder:
+
+```
+/data/storage/sourcedata/<project_name>/mri/
+/data/storage/sourcedata/<project_name>/meg/
+```
+
+
+
+**Note**: *These scripts were designed for the SCAI server environment and have been tested with the following naming conventions and directory structure:*
+  * Subject IDs: `sub-BRS####`
+  * `mri/` folder containing zipped MRI files per subject:
+    `/data/storage/sourcedata/<project>/mri/sub-BRS####_YYYYMMDD.zip`
+
+  * `meg/` folder organized by subject and session date:
+    `/data/storage/sourcedata/<project>/meg/brs_####/YYYYMMDD/`
+
+---
+
+## 4. Data Preparation & BIDS Conversion
 
 These tools support preparing data for broader sharing, including conversion to **BIDS (Brain Imaging Data Structure)**.
 
 * BIDS improves data **accessibility, interoperability, and reproducibility**
 * More information: [https://bids.neuroimaging.io](https://bids.neuroimaging.io)
 
----
+**Note:** BIDS conversion and MRI refacing are optional. If either step is enabled, a corresponding project-specific configuration file must be created before running the workflow.
 
-### Reconstruction Workflow
+---
+### 4.1. BIDS Configuration (optional)
+
+A unique BIDS configuration file **must** be created for each project to correctly map DICOM files to the BIDS format, based on the specific sequences acquired and the naming conventions used in the DICOM headers.
+
+* File name/location:
+
+  ```
+    /data/storage/software/config_files/<project>_config.json
+  ```
+
+---
+### 4.2. MRI Refacing Configuration (optional)
+
+A unique refacing mapping file **must** be created for each project, based on naming conventions and refacing requirements.
+
+* File name/location:
+
+  ```
+  /data/storage/software/config_files/<project>_reface.txt
+  ```
+
+* Each line should contain a unique identifying substring found in the filenames to be refaced.
+* Note: Other anatomical images not specified in the mapping file and all other modalities (e.g., fMRI, dwi) will not be refaced, but will be copied alongside the refaced files without modification. 
+
+---
+### 4.3. Run reconstruction
 
 The primary reconstruction workflow is handled by:
 
@@ -134,7 +197,7 @@ to:
 /data/storage/projects/<project>
 ```
 
-with optional reconstruction to BIDS format.
+with optional BIDS conversion and MRI refacing.
 
 ---
 
@@ -151,7 +214,18 @@ with optional reconstruction to BIDS format.
   ```
   /data/storage/projects/<project>/mri/raw_sorted
   ```
-  
+
+* Copies MEG files from: 
+  ```
+  /data/storage/sourcedata/<project>/meg
+  ```
+
+  to:
+
+  ```
+  /data/storage/projects/<project>/meg/raw
+  ```
+
 ---
 
 #### Optional Processing Steps
@@ -160,71 +234,35 @@ with optional reconstruction to BIDS format.
 | ------------------ | ------------------------------------- |
 | `-b`, `--bids-mri` | Convert MRI data to BIDS format       |
 | `-r`, `--reface`   | Run MRI refacing                      |
-| `-g`, `--meg-copy` | Copy raw MEG data                     |
+| `-g`, `--meg-copy` | Copy raw MEG data only                |
 | `-m`, `--bids-meg` | Copy raw MEG data and convert to BIDS |
 
 ---
 
-#### Usage
+# User Permissions (ACLs)
 
-```
-./run_reconstruction.sh [flags] <subject_id_file.txt> <project_name>
-```
-
----
-
-#### BIDS Configuration File (Required for BIDS Reconstruction)
-
-A unique BIDS configuration file must be created for each project to correctly map DICOM files to the BIDS format, based on the specific sequences acquired and the naming conventions used in the DICOM headers.
-
-* File name format/location:
-
-  ```
-    /data/storage/software/config_files/<project>_config.json
-  ```
-
----
-
-#### Reface Mapping File (Required for MRI refacing)
-
-A unique reface file must be created for each project, based on naming conventions and refacing requirements.
-
-* File name format/location:
-
-  ```
-  /data/storage/software/config_files/<project>_reface.txt
-  ```
-
-* Each line should contain a unique identifying substring found in the filenames to be refaced
-* Note: Other anatomical images not specified in the mapping file and all other modalities (e.g., fMRI, dwi) will not be defaced, but will be copied alongside the defaced files without modification. 
-
----
-
-## User Permissions (ACLs)
+ACL files are stored in:
 
 ```
 /data/storage/software/user_permissions/
 ```
 
-* Stores **user-specific Access Control List (ACL) files**.
-* Each user should have **one ACL file** defining their access to **project directories** under `/data/storage/projects/`.
+Each user has an ACL file defining access to project directories.
 
-#### ACL File Format
-
-Each line in a user’s ACL file specifies a project folder and the permissions granted:
+Format:
 
 ```
 <project_name>:<permissions>
 ```
 
-Permission codes:
+Permissions:
 
-* `r` = read
-* `w` = write
-* `x` = execute
-* `-` = no permission
+- `r` = read
+- `w` = write
+- `x` = execute
+- `-` = no permission
 
-**Example:**
+Example:
 
 ```
 project_1:rwx
@@ -232,41 +270,6 @@ project_2:r-x
 ```
 
 ---
-## Dependencies
 
-The SCAI workflow uses the following external software and packages. These scripts were developed for the SCAI server environment, where some dependencies may already be installed.
-
-### **Docker**
-
- Docker is required for MRI refacing using `mri_reface`.
-
-  - Download and unzip `mri_reface_0.3.5_docker.zip` from:
-        https://www.nitrc.org/projects/mri_reface/
-
-  - The script assumes the Docker image is located at:
-  `/data/storage/software/mri_reface_docker/mri_reface_docker_image`
-
-### **DICOM/BIDS conversion tools**
-
- The following tools must be installed and available in your environment:
-
-  - `dicomsort` (install using: `pip install thedicomsort`)
-  - `dcm2niix`
-  - `dcm2bids`
-  - `mne-bids` (installed automatically)
-  
----
 ## Notes
-
-* These scripts were designed for the SCAI server environment and have been tested with the following naming conventions and directory structure:
-  * Subject IDs: `sub-BRS####`
-  * `mri/` folder containing zipped MRI files per subject:
-    ```
-    /data/storage/sourcedata/<project>/mri/sub-BRS####_YYYYMMDD.zip
-    ```
-  * `meg/` folder organized by subject and session date:
-
-    ```
-    /data/storage/sourcedata/<project>/meg/brs_####/YYYYMMDD/
-    ```
 * The BIDS process **automatically creates a `participants.tsv` file**, which is populated with `n/a` values by default and **should not be relied upon**.
