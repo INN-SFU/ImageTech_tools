@@ -258,7 +258,7 @@ The SCAI workflow uses the following external software and packages. These scrip
 ---
 ## Notes
 
-* These scripts were designed for the ImageTech server environment and have been tested with the following naming conventions and directory structure:
+* These scripts were designed for the SCAI server environment and have been tested with the following naming conventions and directory structure:
   * Subject IDs: `sub-BRS####`
   * `mri/` folder containing zipped MRI files per subject:
     ```
