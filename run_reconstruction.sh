@@ -149,7 +149,6 @@ BASE_DIR="/data/storage/sourcedata"
 PROJECT_DIR="${BASE_DIR}/${PROJECT_NAME}"
 MRI_DIR="${PROJECT_DIR}/mri"
 RECON_DIR="/data/storage/projects/${PROJECT_NAME}/mri/reconstructed"
-#RECON_DIR="/data/storage/test-project/${PROJECT_NAME}/mri/reconstructed" # testing path
 RECON_SCRIPT="/data/storage/software/reconstruct_MRIs.sh"
 REFACE_SCRIPT="/data/storage/software/mri_reface_docker/run_mri_reface_docker.sh"
 MEG_SCRIPT="/data/storage/software/reconstruct_MEG.py"
@@ -216,7 +215,7 @@ LOG_DIR="/data/storage/projects/${PROJECT_NAME}/logs"
 mkdir -p "$LOG_DIR"
 
 # ==================== PROJECT README SETUP ====================
-README_SCRIPT="/data/storage/software/create_project_readmes.sh"
+#README_SCRIPT="/data/storage/software/create_project_readmes.sh"
 #bash "$README_SCRIPT" "$PROJECT_NAME"
 
 # ==================== SUBJECT LOOP ====================
@@ -234,168 +233,156 @@ for subject_id_in_subject_file in "${subject_list_array[@]}"; do
     RAW_SORTED_CREATED_TEMP=0
     # ==================== MRI PROCESSING ====================
     if [ "$MRI_COPY" -eq 1 ]; then
-        # Determine zip file pattern to match for the subject line
-        if [[ "$subject_id_in_subject_file" =~ ^sub[-_].* ]]; then
-            # If starts with 'sub-' or 'sub_'
-            # Match exact if contains '_', otherwise allow _* after
-            if [[ "$subject_id_in_subject_file" == *_* ]]; then
-                pattern="${subject_id_in_subject_file}.zip"
-            else
-                pattern="${subject_id_in_subject_file}_*.zip"
-            fi
-        else
-            # Any other subject ID
-            pattern="*${subject_id_in_subject_file}*.zip"
-        fi
+        subj_norm=$(echo "$subject_id_in_subject_file" | tr '[:upper:]' '[:lower:]' | sed -E 's/^sub[-_]?//; s/[-_]//g')
+        found_zip=0 
+        for zipfile in "$MRI_DIR"/*.zip; do
+            filename=$(basename "$zipfile" .zip)
+            # Normalize filename the same way
+            file_norm=$(echo "$filename" | tr '[:upper:]' '[:lower:]' | sed -E 's/^sub[-_]?//; s/[-_]//g')
 
-        matches=("$MRI_DIR"/$pattern)
-        if [ -e "${matches[0]}" ]; then
-            for zipfile in "${matches[@]}"; do
-                if [ -f "$zipfile" ]; then
-                    echo "Processing MRI $zipfile" | tee -a "$log_file"
-
-                    # Run MRI reconstruction script first
-                    filename=$(basename "$zipfile" .zip)
-                    subj_id=$(echo "$filename" | sed -E 's/^sub[_-]//' | sed -E 's/_[0-9]{8}//')
-                    date_yyyymmdd=$(echo "$filename" | grep -oP '[0-9]{8}')
+            if [[ "$file_norm" == *"$subj_norm"* ]]; then
+                found_zip=1
+                echo "Processing MRI $zipfile" | tee -a "$log_file"
+                    subj_id=$(echo "$filename" | sed -E 's/^(sub[-_]?)?([A-Za-z]+)[-_]?([0-9]+).*$/\2\3/i')
+                    date_yyyymmdd=$(echo "$filename" | grep -oP '[0-9]{8}'| tail -n 1)
                     recon_subject_dir="${RECON_DIR}/${subj_id}/ses-${date_yyyymmdd}"
 
-                    # Check existence of raw_sorted for later MEG-BIDS step
-                    RAW_SORTED_DIR="/data/storage/projects/${PROJECT_NAME}/mri/raw_sorted/sub-${subj_id}/ses-${date_yyyymmdd}"
-                    if [ ! -d "$RAW_SORTED_DIR" ]; then
-                        if [ "$BIDS_MEG" -eq 1 ] && [ "$BIDS_MRI" -eq 0 ]; then
-                            echo "${RAW_SORTED_DIR} directory does not exist. Will create temporary raw_sorted for MEG BIDS."| tee -a "$log_file"
-                            RAW_SORTED_CREATED_TEMP=1
-                        fi
+                # Check existence of raw_sorted for later MEG-BIDS step
+                RAW_SORTED_DIR="/data/storage/projects/${PROJECT_NAME}/mri/raw_sorted/sub-${subj_id}/ses-${date_yyyymmdd}"
+                if [ ! -d "$RAW_SORTED_DIR" ]; then
+                    if [ "$BIDS_MEG" -eq 1 ] && [ "$BIDS_MRI" -eq 0 ]; then
+                        echo "${RAW_SORTED_DIR} directory does not exist. Will create temporary raw_sorted for MEG BIDS."| tee -a "$log_file"
+                        RAW_SORTED_CREATED_TEMP=1
                     fi
+                fi
 
-                    echo "Running MRI script for $zipfile" | tee -a "$log_file"
-                    cmd="bash $RECON_SCRIPT \"$zipfile\" ${PROJECT_NAME}"
+                echo "Running MRI script for $zipfile" | tee -a "$log_file"
+                cmd="bash $RECON_SCRIPT \"$zipfile\" ${PROJECT_NAME}"
 
-                    # Append 'bids' argument if BIDS_MRI is set
-                    if [ "$BIDS_MRI" -eq 1 ]; then
-                        cmd+=" bids"
-                    fi
-                    eval $cmd >> "$log_file" 2>&1
-                    if [ $? -ne 0 ]; then
-                        echo "ERROR: MRI reconstruction failed for ${subj_id}" | tee -a "$log_file"
+                # Append 'bids' argument if BIDS_MRI is set
+                if [ "$BIDS_MRI" -eq 1 ]; then
+                    cmd+=" bids"
+                fi
+                eval $cmd >> "$log_file" 2>&1
+                if [ $? -ne 0 ]; then
+                    echo "ERROR: MRI reconstruction failed for ${subj_id}" | tee -a "$log_file"
+                    continue
+                fi
+
+                # ==================== REFACE ====================
+                if [ $REFACE -eq 1 ]; then
+                    echo "--- MRI refacing ---" | tee -a "$log_file"
+                    recon_anat_dir="${RECON_DIR}/sub-${subj_id}/ses-${date_yyyymmdd}/anat"
+
+                    subject_session_dir="/data/storage/projects/${PROJECT_NAME}/mri/refaced/sub-${subj_id}/ses-${date_yyyymmdd}"
+                    subject_reface_anat_dir="${subject_session_dir}/anat"
+
+                # Load reface patterns from file
+                    reface_pattern_file="/data/storage/software/config_files/${PROJECT_NAME}_reface.txt"
+                    if [ ! -f "$reface_pattern_file" ]; then
+                        echo "Error: Reface pattern file not found: $reface_pattern_file" | tee -a "$log_file"
+                        echo "Skipping" | tee -a "$log_file"
                         continue
                     fi
 
-                    # ==================== REFACE ====================
-                    if [ $REFACE -eq 1 ]; then
-                        echo "--- MRI refacing ---" | tee -a "$log_file"
-                        recon_anat_dir="${RECON_DIR}/sub-${subj_id}/ses-${date_yyyymmdd}/anat"
-
-                        subject_session_dir="/data/storage/projects/${PROJECT_NAME}/mri/refaced/sub-${subj_id}/ses-${date_yyyymmdd}"
-                        subject_reface_anat_dir="${subject_session_dir}/anat"
-
-                    # Load reface patterns from file
-                        reface_pattern_file="/data/storage/software/config_files/${PROJECT_NAME}_reface.txt"
-                        if [ ! -f "$reface_pattern_file" ]; then
-                            echo "Error: Reface pattern file not found: $reface_pattern_file" | tee -a "$log_file"
-                            echo "Skipping" | tee -a "$log_file"
-                            continue
+                    # Read lines and wrap with '*'
+                    reface_patterns=()
+                    while IFS= read -r pattern_line || [ -n "$pattern_line" ]; do
+                        pattern=$(echo "$pattern_line" | xargs)  # trim whitespace
+                        if [ -n "$pattern" ]; then
+                            reface_patterns+=("*${pattern}*")
                         fi
+                    done < "$reface_pattern_file"
 
-                        # Read lines and wrap with '*'
-                        reface_patterns=()
-                        while IFS= read -r pattern_line || [ -n "$pattern_line" ]; do
-                            pattern=$(echo "$pattern_line" | xargs)  # trim whitespace
-                            if [ -n "$pattern" ]; then
-                                reface_patterns+=("*${pattern}*")
-                            fi
-                        done < "$reface_pattern_file"
+                # Check if any refaced files matching the patterns already exist
+                    already_refaced=0
+                    for pattern in "${reface_patterns[@]}"; do
+                        matches=$(find "$subject_reface_anat_dir" -type f -name "$pattern" | wc -l)
+                        already_refaced=$((already_refaced + matches))
+                    done
 
-                    # Check if any refaced files matching the patterns already exist
-                        already_refaced=0
-                        for pattern in "${reface_patterns[@]}"; do
-                            matches=$(find "$subject_reface_anat_dir" -type f -name "$pattern" | wc -l)
-                            already_refaced=$((already_refaced + matches))
-                        done
+                    if [ "$already_refaced" -gt 0 ]; then
+                        echo "Refaced files matching patterns already exist for $subj_id ses-${date_yyyymmdd}, skipping..." | tee -a "$log_file"
 
-                        if [ "$already_refaced" -gt 0 ]; then
-                            echo "Refaced files matching patterns already exist for $subj_id ses-${date_yyyymmdd}, skipping..." | tee -a "$log_file"
+                    else
+                        # Find all .nii.gz files in anat/
+                        mapfile -t nii_gz_files < <(find "$recon_anat_dir" -type f -name '*.nii.gz')
 
+                        if [ "${#nii_gz_files[@]}" -eq 0 ]; then
+                            echo "Warning: No .nii.gz files found for $subj_id on $date_yyyymmdd" | tee -a "$log_file"
                         else
-                            # Find all .nii.gz files in anat/
-                            mapfile -t nii_gz_files < <(find "$recon_anat_dir" -type f -name '*.nii.gz')
+                            # Create a temporary refacing directory
+                            tmp_reface_dir="/tmp/reface_sub-${subj_id}_ses-${date_yyyymmdd}_$$"
+                            tmp_reface_output_dir="${tmp_reface_dir}/refaced"
 
-                            if [ "${#nii_gz_files[@]}" -eq 0 ]; then
-                                echo "Warning: No .nii.gz files found for $subj_id on $date_yyyymmdd" | tee -a "$log_file"
-                            else
-                                # Create a temporary refacing directory
-                                tmp_reface_dir="/tmp/reface_sub-${subj_id}_ses-${date_yyyymmdd}_$$"
-                                tmp_reface_output_dir="${tmp_reface_dir}/refaced"
+                            mkdir -p "$tmp_reface_dir" "$tmp_reface_output_dir" "$subject_reface_anat_dir"
 
-                                mkdir -p "$tmp_reface_dir" "$tmp_reface_output_dir" "$subject_reface_anat_dir"
+                            for nii_gz_file in "${nii_gz_files[@]}"; do
+                                nii_file="${nii_gz_file%.gz}"
+                                base_name=$(basename "$nii_file")
 
-                                for nii_gz_file in "${nii_gz_files[@]}"; do
-                                    nii_file="${nii_gz_file%.gz}"
-                                    base_name=$(basename "$nii_file")
-
-                                    should_reface=0
-                                    for pattern in "${reface_patterns[@]}"; do
-                                        if [[ "$base_name" == $pattern ]]; then
-                                            should_reface=1
-                                            break
-                                        fi
-                                    done
-
-                                    if [ $should_reface -eq 1 ]; then
-                                        echo "Unzipping for refacing: $base_name"
-                                        gunzip -c "$nii_gz_file" > "$tmp_reface_dir/$base_name"
-                                    else
-                                        echo "Copying non-refaced anat file: $base_name"
-                                        cp "$nii_gz_file" "$subject_reface_anat_dir/"
+                                should_reface=0
+                                for pattern in "${reface_patterns[@]}"; do
+                                    if [[ "$base_name" == $pattern ]]; then
+                                        should_reface=1
+                                        break
                                     fi
                                 done
 
-                                chmod -R 777 "$tmp_reface_dir"
-
-                                # Load Docker image (if not already loaded)
-                                sudo docker load -i /data/storage/software/mri_reface_docker/mri_reface_docker_image
-
-                                # Run the refacing script on each copied NIfTI file
-                                for nii_file in "$tmp_reface_dir"/*.nii; do
-                                    echo "Running refacing on $(basename "$nii_file")" | tee -a "$log_file"
-                                    sudo bash "$REFACE_SCRIPT" "$nii_file" "$tmp_reface_output_dir"
-                                done
-
-                                # Move refaced output to anat/ subdirectory in refaced storage
-                                cp -r "$tmp_reface_output_dir/"* "$subject_reface_anat_dir/"
-
-                                # Gzip any remaining .nii files in the subject_reface_anat_dir
-                                echo "Compressing .nii files in $subject_reface_anat_dir"
-                                find "$subject_reface_anat_dir" -type f -name '*.nii' ! -name '*.nii.gz' -exec gzip {} \;
-
-                                # Rename any files with _defaced to _refaced in anat/
-                                echo "Renaming _deFaced files to _refaced in $subject_reface_anat_dir"
-                                find "$subject_reface_anat_dir" -type f -name '*_deFaced*' | while read -r f; do
-                                    mv "$f" "${f/_deFaced/_refaced}"
-                                done
-
-                                # Copy other original files (e.g., dwi/, fmap/, etc.) into the refaced session directory
-                                original_session_dir="${RECON_DIR}/sub-${subj_id}/ses-${date_yyyymmdd}"
-                                echo "Copying additional original files from $original_session_dir to $subject_session_dir"
-                                rsync -av --ignore-existing --exclude='anat/' "$original_session_dir/" "$subject_session_dir/"
-
-                                # Copy any JSON files from anat/ into refaced anat/
-                                if [[ -d "$original_session_dir/anat" ]]; then
-                                    echo "Copying JSONs from $original_session_dir/anat to $subject_reface_anat_dir"
-                                    find "$original_session_dir/anat" -maxdepth 1 -type f -name '*.json' -exec cp {} "$subject_reface_anat_dir/" \;
+                                if [ $should_reface -eq 1 ]; then
+                                    echo "Unzipping for refacing: $base_name"
+                                    gunzip -c "$nii_gz_file" > "$tmp_reface_dir/$base_name"
+                                else
+                                    echo "Copying non-refaced anat file: $base_name"
+                                    cp "$nii_gz_file" "$subject_reface_anat_dir/"
                                 fi
+                            done
 
-                                # Clean up temporary directory
-                                echo "Deleting temporary refacing directory $tmp_reface_dir"
-                                rm -rf "$tmp_reface_dir"
+                            chmod -R 777 "$tmp_reface_dir"
+
+                            # Load Docker image (if not already loaded)
+                            sudo docker load -i /data/storage/software/mri_reface_docker/mri_reface_docker_image
+
+                            # Run the refacing script on each copied NIfTI file
+                            for nii_file in "$tmp_reface_dir"/*.nii; do
+                                echo "Running refacing on $(basename "$nii_file")" | tee -a "$log_file"
+                                sudo bash "$REFACE_SCRIPT" "$nii_file" "$tmp_reface_output_dir"
+                            done
+
+                            # Move refaced output to anat/ subdirectory in refaced storage
+                            cp -r "$tmp_reface_output_dir/"* "$subject_reface_anat_dir/"
+
+                            # Gzip any remaining .nii files in the subject_reface_anat_dir
+                            echo "Compressing .nii files in $subject_reface_anat_dir"
+                            find "$subject_reface_anat_dir" -type f -name '*.nii' ! -name '*.nii.gz' -exec gzip {} \;
+
+                            # Rename any files with _defaced to _refaced in anat/
+                            echo "Renaming _deFaced files to _refaced in $subject_reface_anat_dir"
+                            find "$subject_reface_anat_dir" -type f -name '*_deFaced*' | while read -r f; do
+                                mv "$f" "${f/_deFaced/_refaced}"
+                            done
+
+                            # Copy other original files (e.g., dwi/, fmap/, etc.) into the refaced session directory
+                            original_session_dir="${RECON_DIR}/sub-${subj_id}/ses-${date_yyyymmdd}"
+                            echo "Copying additional original files from $original_session_dir to $subject_session_dir"
+                            rsync -av --ignore-existing --exclude='anat/' "$original_session_dir/" "$subject_session_dir/"
+
+                            # Copy any JSON files from anat/ into refaced anat/
+                            if [[ -d "$original_session_dir/anat" ]]; then
+                                echo "Copying JSONs from $original_session_dir/anat to $subject_reface_anat_dir"
+                                find "$original_session_dir/anat" -maxdepth 1 -type f -name '*.json' -exec cp {} "$subject_reface_anat_dir/" \;
                             fi
+
+                            # Clean up temporary directory
+                            echo "Deleting temporary refacing directory $tmp_reface_dir"
+                            rm -rf "$tmp_reface_dir"
                         fi
                     fi
                 fi
-            done
-        else
-            echo "WARNING: No MRI zip files found for pattern '$pattern' in $MRI_DIR" | tee -a "$log_file"
+            fi
+        done
+        if [[ $found_zip -eq 0 ]]; then
+            echo "WARNING: No MRI zip files found for '$subject_id_in_subject_file' in $MRI_DIR" | tee -a "$log_file"
         fi
     fi
     # ==================== MEG ====================
@@ -425,7 +412,7 @@ for subject_id_in_subject_file in "${subject_list_array[@]}"; do
         echo "Using MEG folder path: $subj_meg_path"
 
         if [ -z "$subj_meg_path" ]; then
-            echo "Warning: MEG subject directory '$subj_meg_path' not found for subject '$subj_id'. Skipping MEG." | tee -a "$log_file"
+            echo "Warning: MEG subject directory not found for subject '$subj_id'. Skipping MEG." | tee -a "$log_file"
             continue
         fi
 
@@ -436,17 +423,18 @@ for subject_id_in_subject_file in "${subject_list_array[@]}"; do
             cmd+=" --bids"
         fi
 
+        eval $cmd >> "$log_file" 2>&1
+        if [ $? -ne 0 ]; then
+            echo "ERROR: MEG reconstruction failed for ${subj_id}" | tee -a "$log_file"
+            continue
+        fi
+
         # Delete temporary raw_sorted if it was created only for MEG-BIDS
         if [ "$RAW_SORTED_CREATED_TEMP" -eq 1 ]; then
             echo "Deleting temporary ${RAW_SORTED_DIR} directory for $subj_id" | tee -a "$log_file"
             rm -rf "$RAW_SORTED_DIR"
         fi
 
-        eval $cmd >> "$log_file" 2>&1
-        if [ $? -ne 0 ]; then
-            echo "ERROR: MEG reconstruction failed for ${subj_id}" | tee -a "$log_file"
-            continue
-        fi
     fi
     end_time=$(date +%s)
     elapsed=$((end_time - start_time))

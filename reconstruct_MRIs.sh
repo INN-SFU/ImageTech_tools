@@ -88,7 +88,7 @@ dicomsort_raw_dirname+=("$raw_name")
 
 
 for subject in "${dicomsort_raw_dirname[@]}"; do
-    subj_id_short=$(echo "$subject" | sed -E 's/^sub[_-]//' | sed -E 's/_[0-9]{8}//')
+    subj_id_short=$(echo "$filename" | sed -E 's/^(sub[-_]?)?([A-Za-z]+)[-_]?([0-9]+).*$/\2\3/i')
     date_yyyymmdd=$(echo "$subject" | grep -oP '[0-9]{8}')
     raw_sorted_dir="$destpath/raw_sorted/sub-$subj_id_short/ses-$date_yyyymmdd"
 
@@ -121,7 +121,7 @@ for subject in "${dicomsort_raw_dirname[@]}"; do
 
         # Peek inside ZIP to get top-level folder
         top_level_dir=$(unzip -l "$destpath/zipped/$filename" | awk '{print $4}' | grep '/$' | head -n1 | cut -d/ -f1)
-        if [[ "$top_level_dir" != *"$subj_id_short"* || "$top_level_dir" != *"$date_yyyymmdd"* ]]; then
+        if [[ "${top_level_dir,,}" != *"${subj_id_short,,}"* || "${top_level_dir,,}" != *"$date_yyyymmdd"* ]]; then
             echo "ERROR: Unzipped folder name mismatch!"
             echo "  Expected folder to include: $subj_id_short and $date_yyyymmdd"
             echo "  Found instead: $top_level_dir"
@@ -147,6 +147,7 @@ for subject in "${dicomsort_raw_dirname[@]}"; do
             if [ "$unzipped_dir" != "$new_dir" ]; then
                 echo "Renaming $unzipped_dir -> $new_dir"
                 mv "$unzipped_dir" "$new_dir"
+                output_dir="$new_dir"
             fi
 
             unzipped_dir="$new_dir"
@@ -213,16 +214,11 @@ for subject in "${dicomsort_raw_dirname[@]}"; do
                     continue
                 }
         fi
-#        echo -e "$clean_subject_id\t$subject" >> "$reconstruction_path/participants.tsv"
 
         # Create participants.tsv with header if it doesn't exist
         if [ ! -f "$participants_tsv" ]; then
             echo -e "participant_id\tsession_id\tsex\tweight\tage" > "$participants_tsv"
         fi
-
-        # Append subject ID with 'sub-' prefix
-        #echo -e "sub-${subj_id_short}" >> "$participants_tsv"
-
 
         # Call python script to update participants.tsv with demographics
         python3 /data/storage/software/extract_subject_info.py \
