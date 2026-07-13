@@ -1,8 +1,8 @@
-# ImageTech Tools
+# SFU's Centre for Advanced Imaging (SCAI) Tools
 
-This repository contains scripts used by **ImageTech** for managing shared imaging data, setting permissions, and reconstructing MRI and MEG datasets, including conversion to **BIDS (Brain Imaging Data Structure)** format.
+This repository contains scripts used by **SCAI** for managing shared imaging data, setting permissions, and reconstructing MRI and MEG datasets, including conversion to **BIDS (Brain Imaging Data Structure)** format.
 
-These tools are intended for use on the ImageTech server and assume access to the shared data storage environment.
+These tools are intended for use on the SCAI server and assume access to the shared data storage environment.
 
 ---
 
@@ -29,7 +29,7 @@ These tools are intended for use on the ImageTech server and assume access to th
 
 ---
 
-## ImageTech Directory Structure Overview
+## SCAI Directory Structure Overview
 
 ### Main Storage Location
 
@@ -61,7 +61,7 @@ Uploaded raw data must be placed within a sub-directory inside `sourcedata`:
 
 * `sourcedata` contains raw, unprocessed imaging data.
 * `<project_name>` corresponds to the specific research project.
-* This folder is intended to be accessed only by ImageTech staff for data management and reconstruction.
+* This folder is intended to be accessed only by SCAI staff for data management and reconstruction.
 
 ---
 
@@ -234,7 +234,7 @@ project_2:r-x
 ---
 ## Dependencies
 
-The ImageTech workflow uses the following external software and packages. These scripts were developed for the ImageTech server environment, where some dependencies may already be installed.
+The SCAI workflow uses the following external software and packages. These scripts were developed for the SCAI server environment, where some dependencies may already be installed.
 
 ### **Docker**
 
