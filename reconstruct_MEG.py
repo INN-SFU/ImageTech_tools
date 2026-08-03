@@ -214,19 +214,43 @@ for session_folder in subject_dir.iterdir():
                         log_error(f"    WARNING: Could not parse subject/task from filename '{raw_meg.name}'. Skipping this file.")
                         continue
 
+#old version - doesn't deal with acquisitions
                     # Extract task and optional run number from task_run_str
-                    m_task = re.match(r'([a-z]+)(\d*)', task_run_str)
-                    if m_task:
-                        task = m_task.group(1)
-                        run = int(m_task.group(2)) if m_task.group(2) else None
-                    else:
-                        log_error(f"    WARNING: Could not parse task/run from '{task_run_str}'. Skipping this file.")
-                        continue
+#                    m_task = re.match(r'([a-z]+)(\d*)', task_run_str)
+#                    if m_task:
+#                        task = m_task.group(1)
+#                        run = int(m_task.group(2)) if m_task.group(2) else None
+#                    else:
+#                        log_error(f"    WARNING: Could not parse task/run from '{task_run_str}'. Skipping this file.")
+#                        continue
 
+
+# break string down into candidAate pairs or singletons for task and possibly acquisition
+                    stringbits = re.findall(re.compile(r'([a-zA-Z]+)[_-]?([0-9]*)'), task_run_str.split('_run')[0])
+                    pairslist = [f"{word}{num if num else ''}" for word, num in stringbits if word]
+                    if len(pairslist)>2:
+                        log_error(f"    WARNING: found too many task[/acquisiiton] elements in '{task_run_str}'. Skipping this file.")
+                        continue                   
+                    elif len(pairslist)>0:
+                        task = pairslist[0] if len(pairslist)>0 else None
+                        acq=pairslist[1] if len(pairslist)>1 else None
+                    else:
+                        log_error(f"    WARNING: Could not parse task[/acquisition] from '{task_run_str}'. Skipping this file.")
+                        continue                    
+# Extract the run number
+                    run = None
+                    run_match = re.search(r'run_?([0-9]+)', task_run_str)
+                    if run_match:
+                        run = run_match.group(1) if run_match else None
+                    else:
+                        log_error(f"    WARNING: Could not parse run from '{task_run_str}'. Skipping this file.")
+                        continue                    
+                    
                     bids_path = BIDSPath(
                         subject=subject_id,
                         session=session_id,
                         task=task,
+                        acquisition=acq,
                         run=run,
                         root=reconstructed_path,
                         datatype='meg',
