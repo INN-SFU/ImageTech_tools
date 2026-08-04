@@ -205,7 +205,10 @@ for session_folder in subject_dir.iterdir():
 
                     # Regex pattern to capture:
                     #  sub[-_]subjectid[_-]task+run[_-]raw...
-                    pattern = r'^(?:sub[-_]?)?([a-z0-9]+)[-_]([a-z]+[0-9]*)[_-]raw'
+#                    pattern = r'^(?:sub[-_]?)?([a-z0-9]+)[-_]([a-z]+[0-9]*)[_-]raw'
+#  generalize to allow qcquisition value and user chaos of names and numbers
+# MUST have a task name myust end with raw. recommend have also have the word run followed be a number before raw, separated by a - or _ . 
+                    pattern = r'^(?:sub[_-]?)?([^_]+)_(.+)_raw$'
                     m = re.match(pattern, fname)
                     if m:
                         subject_id = m.group(1).upper()
