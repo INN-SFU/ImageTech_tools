@@ -208,7 +208,7 @@ for session_folder in subject_dir.iterdir():
 #                    pattern = r'^(?:sub[-_]?)?([a-z0-9]+)[-_]([a-z]+[0-9]*)[_-]raw'
 #  generalize to allow qcquisition value and user chaos of names and numbers
 # MUST have a task name myust end with raw. recommend have also have the word run followed be a number before raw, separated by a _ . 
-                    pattern = r'^(?:sub[_-]?)?([^_-]+)[_-](.+)_raw$'
+                    pattern = r'^(?:sub[_-]?)?([^_-]+)[_-](.+)[_-]raw$'
                     m = re.match(pattern, fname)
                     if m:
                         subject_id = m.group(1).upper()
@@ -230,7 +230,7 @@ for session_folder in subject_dir.iterdir():
 
 # break string down into candidAate pairs or singletons for task and possibly acquisition
                     acq = None
-                    stringbits = re.findall(re.compile(r'([a-z]+)[_-]?([0-9]*)?'), re.split('[_-]run',test_run_str)[0])
+                    stringbits = re.findall(re.compile(r'([a-z]+)[_-]?([0-9]*)?'), re.split(r'[_-]run',test_run_str)[0])
                     pairslist = [f"{word}{num if num else ''}" for word, num in stringbits if word]
                     if len(pairslist)>2:
                         log_error(f"    WARNING: found too many task[/acquisition] elements in '{task_run_str}'. Skipping this file.")
